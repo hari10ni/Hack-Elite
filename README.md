@@ -1,4 +1,6 @@
-# AI Engineering Change Impact Analyzer
+# Hack-Elite: AI Engineering Change Impact Analyzer
+
+Pre-deployment safety checker for software changes.
 
 An AI-powered web application for software change impact analysis, dependency graph visualization, risk evidence explainability, test recommendation, and safe release planning.
 
