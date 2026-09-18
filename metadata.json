@@ -1,0 +1,8 @@
+{
+  "name": "Remix AI Engineering Change Impact Analyzer",
+  "description": "AI-powered web application for software change impact analysis, dependency graph visualization, risk evidence, and release planning.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

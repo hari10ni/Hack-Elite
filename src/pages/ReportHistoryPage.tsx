@@ -1,0 +1,866 @@
+import React, { useState, useMemo } from "react";
+import { AnalysisHistorySummary, ImpactAnalysisResult } from "../types";
+import {
+  FileText,
+  Download,
+  Calendar,
+  ShieldAlert,
+  ArrowRight,
+  FolderOpen,
+  Copy,
+  Check,
+  Code2,
+  Trash2,
+  RefreshCw,
+  Search,
+  Filter,
+  ExternalLink,
+  Printer,
+  ChevronRight,
+  Clock,
+  Layers,
+  AlertTriangle,
+  FileCode,
+  CheckCircle2,
+  Terminal,
+  Activity,
+  GitBranch,
+} from "lucide-react";
+
+interface ReportHistoryPageProps {
+  history: AnalysisHistorySummary[];
+  currentAnalysis: ImpactAnalysisResult | null;
+  onSelectReport: (analysisId: string) => Promise<void>;
+  onOpenDashboard: () => void;
+  onOpenGraph: () => void;
+  onDeleteReport: (analysisId: string) => Promise<void>;
+  onRefreshHistory: () => Promise<void>;
+  isLoading: boolean;
+}
+
+export const ReportHistoryPage: React.FC<ReportHistoryPageProps> = ({
+  history,
+  currentAnalysis,
+  onSelectReport,
+  onOpenDashboard,
+  onOpenGraph,
+  onDeleteReport,
+  onRefreshHistory,
+  isLoading,
+}) => {
+  const [activeViewTab, setActiveViewTab] = useState<"visual" | "markdown" | "json">("visual");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [riskFilter, setRiskFilter] = useState<"ALL" | "HIGH" | "MEDIUM" | "LOW">("ALL");
+  const [sortOrder, setSortOrder] = useState<"newest" | "oldest" | "risk">("newest");
+  const [copiedMd, setCopiedMd] = useState(false);
+  const [copiedJson, setCopiedJson] = useState(false);
+  const [copiedCmd, setCopiedCmd] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Auto-select latest report if none selected and history exists
+  React.useEffect(() => {
+    if (!currentAnalysis && history.length > 0) {
+      onSelectReport(history[0].id).catch(console.error);
+    }
+  }, [history, currentAnalysis, onSelectReport]);
+
+  // Filter and sort history
+  const filteredHistory = useMemo(() => {
+    return history
+      .filter((item) => {
+        const matchesSearch =
+          item.changed_file.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          (item.change_description || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+          item.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          item.project_name.toLowerCase().includes(searchQuery.toLowerCase());
+        const matchesRisk =
+          riskFilter === "ALL" || item.risk_level.toUpperCase() === riskFilter;
+        return matchesSearch && matchesRisk;
+      })
+      .sort((a, b) => {
+        if (sortOrder === "newest") {
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        } else if (sortOrder === "oldest") {
+          return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        } else {
+          return b.risk_score - a.risk_score;
+        }
+      });
+  }, [history, searchQuery, riskFilter, sortOrder]);
+
+  // Generate Markdown representation
+  const generateMarkdownReport = (res: ImpactAnalysisResult) => {
+    return `# AI Engineering Change Impact Analysis Report
+
+**Analysis ID:** \`${res.analysisId}\`  
+**Project:** ${res.projectName || "Python Project"}  
+**Target Changed File:** \`${res.changedFile}\`  
+**Risk Level:** **${res.riskLevel}** (Score: ${res.riskScore}/100)  
+**Timestamp:** ${res.createdAt}  
+**Files Scanned:** ${res.filesScanned || 0} | **Modules Identified:** ${res.modulesIdentified || 0}
+
+---
+
+## 1. Executive Summary & Architectural Insights
+${res.aiExplanation || "No summary provided."}
+
+---
+
+## 2. Downstream Blast Radius
+- **Directly Affected Files (${(res.directlyAffectedFiles || []).length}):**  
+${(res.directlyAffectedFiles || []).map((f) => `  - \`${f}\``).join("\n") || "  - None detected"}
+
+- **Indirectly Affected Files (${(res.indirectlyAffectedFiles || []).length}):**  
+${(res.indirectlyAffectedFiles || []).map((f) => `  - \`${f}\``).join("\n") || "  - None detected"}
+
+---
+
+## 3. Risk Evidence Matrix
+| Component | Priority | Reason | Dependency Chain |
+|-----------|----------|--------|------------------|
+${(res.riskEvidence || [])
+  .map(
+    (ev) =>
+      `| \`${ev.component}\` | **${ev.priority}** | ${ev.reason.replace(/\|/g, "/")} | \`${(ev.dependencyPath || []).join(
+        " → "
+      )}\` |`
+  )
+  .join("\n") || "| None | LOW | No risk evidence logged | - |"}
+
+---
+
+## 4. Recommended Pre-Release Verification Tests
+${(res.testRecommendations || [])
+  .map(
+    (t, idx) => `### ${idx + 1}. \`${t.testFile}\` [Priority: ${t.priority}]
+- **Target Component:** \`${t.targetComponent}\`
+- **Relevance:** ${t.relevanceReason}
+- **Run Command:** \`${t.suggestedCommands?.[0] || `pytest ${t.testFile}`}\`
+`
+  )
+  .join("\n") || "No specific automated test suites identified."}
+
+---
+
+## 5. Rollback Contingency Strategy
+${(res.releasePlan?.rollbackPlan || []).map((s, idx) => `${idx + 1}. ${s}`).join("\n") || "1. Standard git rollback to previous stable commit tag."}
+
+---
+*Generated by AI Engineering Change Impact Analyzer (Python 3.10 AST + SQLite Store)*
+`;
+  };
+
+  const handleDownloadMarkdown = () => {
+    if (!currentAnalysis) return;
+    const md = generateMarkdownReport(currentAnalysis);
+    const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `impact_report_${currentAnalysis.changedFile.replace(/\//g, "_")}_${currentAnalysis.analysisId}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadJson = () => {
+    if (!currentAnalysis) return;
+    const jsonStr = JSON.stringify(currentAnalysis, null, 2);
+    const blob = new Blob([jsonStr], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `impact_analysis_${currentAnalysis.analysisId}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleCopyMarkdown = () => {
+    if (!currentAnalysis) return;
+    const md = generateMarkdownReport(currentAnalysis);
+    navigator.clipboard.writeText(md);
+    setCopiedMd(true);
+    setTimeout(() => setCopiedMd(false), 2000);
+  };
+
+  const handleCopyJson = () => {
+    if (!currentAnalysis) return;
+    navigator.clipboard.writeText(JSON.stringify(currentAnalysis, null, 2));
+    setCopiedJson(true);
+    setTimeout(() => setCopiedJson(false), 2000);
+  };
+
+  const handleCopyCommand = (cmd: string) => {
+    navigator.clipboard.writeText(cmd);
+    setCopiedCmd(cmd);
+    setTimeout(() => setCopiedCmd(null), 2000);
+  };
+
+  const handlePrintReport = () => {
+    window.print();
+  };
+
+  const handleDelete = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (window.confirm(`Are you sure you want to delete analysis report #${id}? This cannot be undone.`)) {
+      setDeletingId(id);
+      try {
+        await onDeleteReport(id);
+      } finally {
+        setDeletingId(null);
+      }
+    }
+  };
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await onRefreshHistory();
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6 max-w-7xl mx-auto py-4" id="report-history-container">
+      {/* Top Header */}
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 pb-4 border-b border-[#718477]/25">
+        <div>
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-[#394A3F]/15 border border-[#394A3F]/30 flex items-center justify-center text-[#394A3F]">
+              <FileText className="w-4 h-4" />
+            </div>
+            <h1 className="text-xl font-bold text-[#202522]">
+              Reports & Historical Audit Trail
+            </h1>
+            <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-[#F7F5EF] text-[#394A3F] border border-[#718477]/30 font-semibold">
+              {history.length} {history.length === 1 ? "Record" : "Records"}
+            </span>
+          </div>
+          <p className="text-xs text-[#718477] mt-1">
+            Browse stored SQLite analyses, inspect blast radius evidence, and export audit-ready documentation.
+          </p>
+        </div>
+
+        {/* Global Toolbar */}
+        <div className="flex items-center flex-wrap gap-2">
+          <button
+            id="btn-refresh-history"
+            onClick={handleRefresh}
+            disabled={isRefreshing || isLoading}
+            className="px-3 py-1.5 rounded-lg bg-[#F7F5EF] hover:bg-[#EAE6DA] text-[#202522] border border-[#718477]/30 text-xs font-medium transition-colors flex items-center gap-1.5 disabled:opacity-50 shadow-sm"
+            title="Reload analysis records from SQLite"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin text-[#394A3F]" : "text-[#718477]"}`} />
+            Refresh
+          </button>
+
+          {currentAnalysis && (
+            <>
+              <button
+                id="btn-open-dashboard"
+                onClick={onOpenDashboard}
+                className="px-3 py-1.5 rounded-lg bg-[#394A3F] hover:bg-[#2D3A2A] text-[#FFFFFF] text-xs font-semibold transition-colors flex items-center gap-1.5 shadow-sm"
+                title="Open loaded report in interactive Impact Dashboard"
+              >
+                <Activity className="w-3.5 h-3.5 text-[#C6A76B]" />
+                Impact Dashboard
+                <ExternalLink className="w-3 h-3 ml-0.5 opacity-80" />
+              </button>
+
+              <button
+                id="btn-open-graph"
+                onClick={onOpenGraph}
+                className="px-3 py-1.5 rounded-lg bg-[#F7F5EF] hover:bg-[#EAE6DA] text-[#202522] border border-[#718477]/30 text-xs font-medium transition-colors flex items-center gap-1.5 shadow-sm"
+                title="View in interactive dependency graph"
+              >
+                <GitBranch className="w-3.5 h-3.5 text-[#394A3F]" />
+                Graph
+              </button>
+
+              <button
+                id="btn-print-report"
+                onClick={handlePrintReport}
+                className="px-3 py-1.5 rounded-lg bg-[#F7F5EF] hover:bg-[#EAE6DA] text-[#202522] border border-[#718477]/30 text-xs font-medium transition-colors flex items-center gap-1.5 shadow-sm"
+                title="Print or save as PDF"
+              >
+                <Printer className="w-3.5 h-3.5 text-[#718477]" />
+                Print / PDF
+              </button>
+
+              <button
+                id="btn-download-md"
+                onClick={handleDownloadMarkdown}
+                className="px-3 py-1.5 rounded-lg bg-[#394A3F] hover:bg-[#2D3A2A] text-[#FFFFFF] text-xs font-semibold shadow-sm transition-colors flex items-center gap-1.5"
+              >
+                <Download className="w-3.5 h-3.5 text-[#C6A76B]" />
+                Download (.md)
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Main Content Layout */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* Left Column: History Records List */}
+        <div className="lg:col-span-4 space-y-3">
+          <div className="bg-[#FFFFFF] border border-[#718477]/25 rounded-xl p-3.5 space-y-3 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-[#202522] uppercase tracking-wider flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-[#718477]" />
+                SQLite Audit History
+              </span>
+              <span className="text-[11px] font-mono text-[#718477]">
+                {filteredHistory.length} of {history.length}
+              </span>
+            </div>
+
+            {/* Search Input */}
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-[#718477]" />
+              <input
+                id="input-history-search"
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search file, description, ID..."
+                className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-[#F7F5EF] border border-[#718477]/30 text-xs text-[#202522] placeholder:text-[#718477] focus:outline-none focus:border-[#394A3F] transition-colors"
+              />
+            </div>
+
+            {/* Filter & Sort Controls */}
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <div className="flex items-center gap-1">
+                {(["ALL", "HIGH", "MEDIUM", "LOW"] as const).map((lvl) => (
+                  <button
+                    key={lvl}
+                    onClick={() => setRiskFilter(lvl)}
+                    className={`px-2 py-0.5 rounded text-[10px] font-mono font-semibold transition-colors ${
+                      riskFilter === lvl
+                        ? "bg-[#394A3F] text-[#FFFFFF]"
+                        : "bg-[#F7F5EF] text-[#718477] hover:text-[#202522] hover:bg-[#EAE6DA]"
+                    }`}
+                  >
+                    {lvl}
+                  </button>
+                ))}
+              </div>
+
+              <select
+                id="select-history-sort"
+                value={sortOrder}
+                onChange={(e) => setSortOrder(e.target.value as any)}
+                className="bg-[#F7F5EF] border border-[#718477]/30 rounded text-[10px] text-[#202522] px-2 py-1 focus:outline-none focus:border-[#394A3F]"
+              >
+                <option value="newest">Newest First</option>
+                <option value="oldest">Oldest First</option>
+                <option value="risk">Highest Risk</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Cards List */}
+          <div className="space-y-2 max-h-[680px] overflow-y-auto pr-1">
+            {filteredHistory.length > 0 ? (
+              filteredHistory.map((item) => {
+                const isSelected = currentAnalysis?.analysisId === item.id;
+                return (
+                  <div
+                    key={item.id}
+                    id={`history-item-${item.id}`}
+                    onClick={() => onSelectReport(item.id)}
+                    className={`group relative p-3.5 rounded-xl border cursor-pointer transition-all text-xs ${
+                      isSelected
+                        ? "bg-[#394A3F]/10 border-[#394A3F] shadow-sm ring-1 ring-[#394A3F]/40"
+                        : "bg-[#FFFFFF] border-[#718477]/25 hover:border-[#394A3F]/50 hover:bg-[#F7F5EF]/60 shadow-sm"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2 mb-1.5">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <FileCode className={`w-3.5 h-3.5 shrink-0 ${isSelected ? "text-[#394A3F]" : "text-[#718477]"}`} />
+                        <span className="font-mono font-semibold text-[#202522] truncate" title={item.changed_file}>
+                          {item.changed_file}
+                        </span>
+                      </div>
+                      <span
+                        className={`text-[10px] font-mono px-1.5 py-0.5 rounded border shrink-0 font-semibold ${
+                          item.risk_level === "HIGH"
+                            ? "bg-[#A63A3A]/10 text-[#A63A3A] border-[#A63A3A]/30"
+                            : item.risk_level === "MEDIUM"
+                            ? "bg-[#C6A76B]/20 text-[#845F1E] border-[#C6A76B]/40"
+                            : "bg-[#718477]/15 text-[#394A3F] border-[#718477]/30"
+                        }`}
+                      >
+                        {item.risk_level} ({item.risk_score})
+                      </span>
+                    </div>
+
+                    <p className="text-[#718477] text-[11px] line-clamp-2 leading-relaxed">
+                      {item.change_description || "Routine maintenance / refactoring"}
+                    </p>
+
+                    <div className="flex items-center justify-between mt-2.5 pt-2 border-t border-[#718477]/15 text-[10px] text-[#718477] font-mono">
+                      <span className="truncate max-w-[130px]" title={`ID: ${item.id}`}>
+                        #{item.id.slice(0, 8)}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <span>{item.created_at ? item.created_at.split(" ")[0] : "Recent"}</span>
+                        <button
+                          id={`btn-delete-report-${item.id}`}
+                          onClick={(e) => handleDelete(e, item.id)}
+                          disabled={deletingId === item.id}
+                          className="opacity-0 group-hover:opacity-100 p-1 hover:bg-[#A63A3A]/10 hover:text-[#A63A3A] rounded text-[#718477] transition-opacity"
+                          title="Delete report from SQLite"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="p-8 rounded-xl bg-[#FFFFFF] border border-[#718477]/25 text-center text-[#718477] text-xs shadow-sm">
+                <FolderOpen className="w-8 h-8 mx-auto mb-2 opacity-40 text-[#718477]" />
+                <p className="font-semibold text-[#202522]">No matching reports</p>
+                <p className="text-[11px] text-[#718477] mt-1">
+                  {history.length === 0
+                    ? "Execute a change scenario or impact analysis to populate SQLite history."
+                    : "Try adjusting your search query or risk filter."}
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Right Column: Interactive Report Viewer */}
+        <div className="lg:col-span-8">
+          {currentAnalysis ? (
+            <div className="rounded-xl border border-[#718477]/25 bg-[#FFFFFF] shadow-sm overflow-hidden">
+              {/* Report Header Card */}
+              <div className="p-5 border-b border-[#718477]/20 bg-[#F7F5EF]/60 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-base font-bold text-[#202522] font-mono">
+                        {currentAnalysis.changedFile}
+                      </h2>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-[#394A3F]/10 text-[#394A3F] border border-[#394A3F]/30 font-semibold">
+                        {currentAnalysis.projectName || "Python Project"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-[#718477] font-mono mt-0.5 flex items-center gap-2">
+                      <span>ID: {currentAnalysis.analysisId}</span>
+                      <span>•</span>
+                      <span>{currentAnalysis.createdAt || "Just now"}</span>
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <div
+                      className={`px-3 py-1.5 rounded-lg border text-xs font-mono font-bold flex items-center gap-1.5 ${
+                        currentAnalysis.riskLevel === "HIGH"
+                          ? "bg-[#A63A3A]/10 text-[#A63A3A] border-[#A63A3A]/30"
+                          : currentAnalysis.riskLevel === "MEDIUM"
+                          ? "bg-[#C6A76B]/20 text-[#845F1E] border-[#C6A76B]/40"
+                          : "bg-[#718477]/15 text-[#394A3F] border-[#718477]/30"
+                      }`}
+                    >
+                      <ShieldAlert className="w-3.5 h-3.5" />
+                      {currentAnalysis.riskLevel} RISK ({currentAnalysis.riskScore}/100)
+                    </div>
+                  </div>
+                </div>
+
+                {/* Quick Metrics Bar */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-center font-mono">
+                  <div className="p-2 rounded-lg bg-[#FFFFFF] border border-[#718477]/25 shadow-xs">
+                    <div className="text-[10px] text-[#718477] uppercase tracking-wider font-semibold">Direct Radius</div>
+                    <div className="text-sm font-bold text-[#A63A3A] mt-0.5">
+                      {currentAnalysis.directlyAffectedFiles?.length || 0} files
+                    </div>
+                  </div>
+                  <div className="p-2 rounded-lg bg-[#FFFFFF] border border-[#718477]/25 shadow-xs">
+                    <div className="text-[10px] text-[#718477] uppercase tracking-wider font-semibold">Indirect Radius</div>
+                    <div className="text-sm font-bold text-[#845F1E] mt-0.5">
+                      {currentAnalysis.indirectlyAffectedFiles?.length || 0} files
+                    </div>
+                  </div>
+                  <div className="p-2 rounded-lg bg-[#FFFFFF] border border-[#718477]/25 shadow-xs">
+                    <div className="text-[10px] text-[#718477] uppercase tracking-wider font-semibold">Risk Evidence</div>
+                    <div className="text-sm font-bold text-[#394A3F] mt-0.5">
+                      {currentAnalysis.riskEvidence?.length || 0} items
+                    </div>
+                  </div>
+                  <div className="p-2 rounded-lg bg-[#FFFFFF] border border-[#718477]/25 shadow-xs">
+                    <div className="text-[10px] text-[#718477] uppercase tracking-wider font-semibold">Pre-Release Tests</div>
+                    <div className="text-sm font-bold text-[#394A3F] mt-0.5">
+                      {currentAnalysis.testRecommendations?.length || 0} suites
+                    </div>
+                  </div>
+                </div>
+
+                {/* Sub-Tabs Selector */}
+                <div className="flex items-center justify-between border-t border-[#718477]/20 pt-3">
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <button
+                      id="tab-view-visual"
+                      onClick={() => setActiveViewTab("visual")}
+                      className={`px-3 py-1.5 rounded-lg font-medium transition-colors flex items-center gap-1.5 ${
+                        activeViewTab === "visual"
+                          ? "bg-[#394A3F] text-[#FFFFFF] font-semibold"
+                          : "text-[#718477] hover:text-[#202522] hover:bg-[#F7F5EF]"
+                      }`}
+                    >
+                      <Layers className="w-3.5 h-3.5" />
+                      Visual Executive Report
+                    </button>
+
+                    <button
+                      id="tab-view-markdown"
+                      onClick={() => setActiveViewTab("markdown")}
+                      className={`px-3 py-1.5 rounded-lg font-medium transition-colors flex items-center gap-1.5 ${
+                        activeViewTab === "markdown"
+                          ? "bg-[#394A3F] text-[#FFFFFF] font-semibold"
+                          : "text-[#718477] hover:text-[#202522] hover:bg-[#F7F5EF]"
+                      }`}
+                    >
+                      <FileText className="w-3.5 h-3.5" />
+                      Markdown (.md)
+                    </button>
+
+                    <button
+                      id="tab-view-json"
+                      onClick={() => setActiveViewTab("json")}
+                      className={`px-3 py-1.5 rounded-lg font-medium transition-colors flex items-center gap-1.5 ${
+                        activeViewTab === "json"
+                          ? "bg-[#394A3F] text-[#FFFFFF] font-semibold"
+                          : "text-[#718477] hover:text-[#202522] hover:bg-[#F7F5EF]"
+                      }`}
+                    >
+                      <Code2 className="w-3.5 h-3.5" />
+                      Audit JSON
+                    </button>
+                  </div>
+
+                  {/* Copy Button for current active tab */}
+                  {activeViewTab === "markdown" && (
+                    <button
+                      onClick={handleCopyMarkdown}
+                      className="px-2.5 py-1 rounded bg-[#F7F5EF] hover:bg-[#EAE6DA] text-[#202522] text-xs font-medium transition-colors flex items-center gap-1 border border-[#718477]/30 shadow-xs"
+                    >
+                      {copiedMd ? <Check className="w-3 h-3 text-[#394A3F]" /> : <Copy className="w-3 h-3 text-[#718477]" />}
+                      {copiedMd ? "Copied" : "Copy Markdown"}
+                    </button>
+                  )}
+
+                  {activeViewTab === "json" && (
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={handleCopyJson}
+                        className="px-2.5 py-1 rounded bg-[#F7F5EF] hover:bg-[#EAE6DA] text-[#202522] text-xs font-medium transition-colors flex items-center gap-1 border border-[#718477]/30 shadow-xs"
+                      >
+                        {copiedJson ? <Check className="w-3 h-3 text-[#394A3F]" /> : <Copy className="w-3 h-3 text-[#718477]" />}
+                        {copiedJson ? "Copied" : "Copy JSON"}
+                      </button>
+                      <button
+                        onClick={handleDownloadJson}
+                        className="px-2.5 py-1 rounded bg-[#394A3F] hover:bg-[#2D3A2A] text-[#FFFFFF] text-xs font-semibold transition-colors flex items-center gap-1 shadow-xs"
+                      >
+                        <Download className="w-3 h-3" />
+                        Download
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Tab Contents */}
+              <div className="p-6 max-h-[720px] overflow-y-auto space-y-6 bg-[#FFFFFF]">
+                {activeViewTab === "visual" && (
+                  <div className="space-y-6 text-[#202522] text-xs">
+                    {/* Section 1: Executive Summary */}
+                    <div className="space-y-2">
+                      <h3 className="text-sm font-semibold text-[#202522] flex items-center gap-2">
+                        <Activity className="w-4 h-4 text-[#394A3F]" />
+                        1. Executive Summary & Architectural Insights
+                      </h3>
+                      <div className="p-4 rounded-xl bg-[#F7F5EF] border border-[#718477]/25 leading-relaxed space-y-2 shadow-xs">
+                        {currentAnalysis.aiExplanation ? (
+                          <div className="whitespace-pre-line text-[#202522] leading-relaxed font-sans">
+                            {currentAnalysis.aiExplanation}
+                          </div>
+                        ) : (
+                          <p className="text-[#718477] italic">No AI explanation recorded for this analysis.</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Section 2: Blast Radius Breakdown */}
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-semibold text-[#202522] flex items-center gap-2">
+                          <GitBranch className="w-4 h-4 text-[#394A3F]" />
+                          2. Downstream Blast Radius
+                        </h3>
+                        <button
+                          onClick={onOpenGraph}
+                          className="text-[11px] text-[#394A3F] hover:text-[#2D3A2A] font-mono font-semibold flex items-center gap-1"
+                        >
+                          Inspect in Graph <ChevronRight className="w-3 h-3" />
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {/* Direct */}
+                        <div className="p-3.5 rounded-xl bg-[#F7F5EF] border border-[#A63A3A]/25 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-[#A63A3A] flex items-center gap-1.5">
+                              <ShieldAlert className="w-3.5 h-3.5" />
+                              Directly Affected Files ({currentAnalysis.directlyAffectedFiles?.length || 0})
+                            </span>
+                          </div>
+                          <div className="space-y-1.5 pt-1">
+                            {currentAnalysis.directlyAffectedFiles?.length ? (
+                              currentAnalysis.directlyAffectedFiles.map((f) => (
+                                <div
+                                  key={f}
+                                  className="px-2 py-1 rounded bg-[#FFFFFF] border border-[#A63A3A]/25 text-[#A63A3A] font-mono text-[11px] flex items-center justify-between"
+                                >
+                                  <span>{f}</span>
+                                  <span className="text-[9px] px-1 rounded bg-[#A63A3A]/10 text-[#A63A3A] font-sans font-semibold">
+                                    Direct Caller
+                                  </span>
+                                </div>
+                              ))
+                            ) : (
+                              <p className="text-[#718477] text-[11px] italic">No direct callers affected.</p>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Indirect */}
+                        <div className="p-3.5 rounded-xl bg-[#F7F5EF] border border-[#C6A76B]/40 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-[#845F1E] flex items-center gap-1.5">
+                              <AlertTriangle className="w-3.5 h-3.5 text-[#C6A76B]" />
+                              Indirectly Affected Files ({currentAnalysis.indirectlyAffectedFiles?.length || 0})
+                            </span>
+                          </div>
+                          <div className="space-y-1.5 pt-1">
+                            {currentAnalysis.indirectlyAffectedFiles?.length ? (
+                              currentAnalysis.indirectlyAffectedFiles.map((f) => (
+                                <div
+                                  key={f}
+                                  className="px-2 py-1 rounded bg-[#FFFFFF] border border-[#C6A76B]/30 text-[#845F1E] font-mono text-[11px] flex items-center justify-between"
+                                >
+                                  <span>{f}</span>
+                                  <span className="text-[9px] px-1 rounded bg-[#C6A76B]/20 text-[#845F1E] font-sans font-semibold">
+                                    Secondary (2-hop)
+                                  </span>
+                                </div>
+                              ))
+                            ) : (
+                              <p className="text-[#718477] text-[11px] italic">No indirect callers affected.</p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Section 3: Risk Evidence Matrix */}
+                    <div className="space-y-2">
+                      <h3 className="text-sm font-semibold text-[#202522] flex items-center gap-2">
+                        <ShieldAlert className="w-4 h-4 text-[#A63A3A]" />
+                        3. Risk Evidence Matrix ({currentAnalysis.riskEvidence?.length || 0} Items)
+                      </h3>
+
+                      <div className="border border-[#718477]/25 rounded-xl overflow-hidden bg-[#FFFFFF]">
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left border-collapse text-xs">
+                            <thead>
+                              <tr className="border-b border-[#718477]/20 bg-[#F7F5EF] text-[11px] font-mono text-[#718477]">
+                                <th className="py-2.5 px-3">Component</th>
+                                <th className="py-2.5 px-3">Priority</th>
+                                <th className="py-2.5 px-3">Root Cause & Evidence</th>
+                                <th className="py-2.5 px-3">Dependency Chain</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-[#718477]/15 font-sans text-[#202522]">
+                              {currentAnalysis.riskEvidence?.length ? (
+                                currentAnalysis.riskEvidence.map((ev, idx) => (
+                                  <tr key={idx} className="hover:bg-[#F7F5EF]/60 transition-colors">
+                                    <td className="py-2.5 px-3 font-mono font-semibold text-[#202522]">
+                                      {ev.component}
+                                    </td>
+                                    <td className="py-2.5 px-3">
+                                      <span
+                                        className={`px-2 py-0.5 rounded text-[10px] font-mono font-semibold ${
+                                          ev.priority === "HIGH"
+                                            ? "bg-[#A63A3A]/10 text-[#A63A3A] border border-[#A63A3A]/30"
+                                            : ev.priority === "MEDIUM"
+                                            ? "bg-[#C6A76B]/20 text-[#845F1E] border border-[#C6A76B]/40"
+                                            : "bg-[#718477]/15 text-[#394A3F] border border-[#718477]/30"
+                                        }`}
+                                      >
+                                        {ev.priority}
+                                      </span>
+                                    </td>
+                                    <td className="py-2.5 px-3 max-w-xs leading-relaxed text-[#202522]">
+                                      {ev.reason}
+                                    </td>
+                                    <td className="py-2.5 px-3 font-mono text-[11px] text-[#718477]">
+                                      {ev.dependencyPath?.join(" → ") || "Direct"}
+                                    </td>
+                                  </tr>
+                                ))
+                              ) : (
+                                <tr>
+                                  <td colSpan={4} className="py-4 text-center text-[#718477] italic">
+                                    No risk evidence recorded.
+                                  </td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Section 4: Recommended Pre-Release Tests */}
+                    <div className="space-y-2">
+                      <h3 className="text-sm font-semibold text-[#202522] flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-[#394A3F]" />
+                        4. Recommended Pre-Release Test Verification
+                      </h3>
+
+                      <div className="space-y-2">
+                        {currentAnalysis.testRecommendations?.length ? (
+                          currentAnalysis.testRecommendations.map((test, idx) => {
+                            const cmd = test.suggestedCommands?.[0] || `pytest ${test.testFile}`;
+                            return (
+                              <div
+                                key={idx}
+                                className="p-3.5 rounded-xl bg-[#F7F5EF] border border-[#718477]/25 space-y-2 shadow-xs"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-mono font-semibold text-[#202522]">
+                                      {test.testFile}
+                                    </span>
+                                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#394A3F]/10 text-[#394A3F] border border-[#394A3F]/25 font-semibold">
+                                      Target: {test.targetComponent}
+                                    </span>
+                                  </div>
+                                  <span
+                                    className={`text-[10px] font-mono px-1.5 py-0.5 rounded font-semibold ${
+                                      test.priority === "CRITICAL"
+                                        ? "bg-[#A63A3A]/10 text-[#A63A3A] border border-[#A63A3A]/30"
+                                        : "bg-[#C6A76B]/20 text-[#845F1E] border border-[#C6A76B]/40"
+                                    }`}
+                                  >
+                                    {test.priority} PRIORITY
+                                  </span>
+                                </div>
+                                <p className="text-[#718477] text-[11px] leading-relaxed">
+                                  {test.relevanceReason}
+                                </p>
+                                <div className="flex items-center justify-between bg-[#FFFFFF] px-3 py-1.5 rounded-lg border border-[#718477]/25 font-mono text-[11px]">
+                                  <span className="text-[#394A3F] font-semibold flex items-center gap-2">
+                                    <Terminal className="w-3.5 h-3.5 text-[#718477]" />
+                                    {cmd}
+                                  </span>
+                                  <button
+                                    onClick={() => handleCopyCommand(cmd)}
+                                    className="p-1 hover:bg-[#F7F5EF] rounded text-[#718477] hover:text-[#202522] transition-colors"
+                                    title="Copy command"
+                                  >
+                                    {copiedCmd === cmd ? (
+                                      <Check className="w-3.5 h-3.5 text-[#394A3F]" />
+                                    ) : (
+                                      <Copy className="w-3.5 h-3.5" />
+                                    )}
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })
+                        ) : (
+                          <div className="p-4 rounded-xl bg-[#F7F5EF] border border-[#718477]/25 text-[#718477] italic">
+                            No specific test recommendations logged.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Section 5: Rollback Contingency */}
+                    <div className="space-y-2">
+                      <h3 className="text-sm font-semibold text-[#202522] flex items-center gap-2">
+                        <Layers className="w-4 h-4 text-[#C6A76B]" />
+                        5. Rollback Contingency Checklist
+                      </h3>
+                      <div className="p-4 rounded-xl bg-[#F7F5EF] border border-[#718477]/25 space-y-2 shadow-xs">
+                        {currentAnalysis.releasePlan?.rollbackPlan?.length ? (
+                          currentAnalysis.releasePlan.rollbackPlan.map((step, idx) => (
+                            <div key={idx} className="flex items-start gap-2.5 text-[#202522] text-xs">
+                              <span className="w-5 h-5 rounded-full bg-[#394A3F] text-[#FFFFFF] font-mono text-[11px] flex items-center justify-center shrink-0 mt-0.5 font-semibold">
+                                {idx + 1}
+                              </span>
+                              <span className="leading-relaxed">{step}</span>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-[#718477] italic">Standard git revert procedure applies.</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {activeViewTab === "markdown" && (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between text-xs text-[#718477] font-mono">
+                      <span>Export-ready Markdown document</span>
+                      <span>Formatted with standard GitHub Flavored Markdown</span>
+                    </div>
+                    <pre className="bg-[#F7F5EF] p-4 rounded-xl border border-[#718477]/25 font-mono text-[11px] leading-relaxed text-[#202522] overflow-x-auto whitespace-pre-wrap">
+                      {generateMarkdownReport(currentAnalysis)}
+                    </pre>
+                  </div>
+                )}
+
+                {activeViewTab === "json" && (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between text-xs text-[#718477] font-mono">
+                      <span>Raw SQLite Analysis Object (JSON)</span>
+                      <span>Complete schema including graph delta & evidence</span>
+                    </div>
+                    <pre className="bg-[#F7F5EF] p-4 rounded-xl border border-[#718477]/25 font-mono text-[11px] leading-relaxed text-[#394A3F] overflow-x-auto">
+                      {JSON.stringify(currentAnalysis, null, 2)}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="h-full min-h-[420px] flex flex-col items-center justify-center p-8 rounded-xl border border-[#718477]/25 bg-[#FFFFFF] text-center text-[#718477] shadow-sm">
+              <FolderOpen className="w-12 h-12 mb-3 opacity-40 text-[#394A3F]" />
+              <h3 className="text-sm font-semibold text-[#202522]">No Report Selected</h3>
+              <p className="text-xs text-[#718477] mt-1 max-w-sm leading-relaxed">
+                Select an analysis record from the SQLite history on the left, or navigate to Change Scenarios to run a new impact evaluation.
+              </p>
+              <button
+                onClick={onOpenDashboard}
+                className="mt-4 px-4 py-2 rounded-lg bg-[#394A3F] hover:bg-[#2D3A2A] text-white text-xs font-semibold shadow transition-colors flex items-center gap-1.5"
+              >
+                Go to Change Scenarios
+                <ArrowRight className="w-3.5 h-3.5 text-[#C6A76B]" />
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
